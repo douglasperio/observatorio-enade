@@ -12,7 +12,6 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-import streamlit.components.v1 as components
 
 DADOS = Path(__file__).parent / "dados"
 
@@ -225,8 +224,7 @@ transform:translate(-50%,-50%) rotate(45deg);box-shadow:0 1px 3px rgba(0,0,0,.25
 [data-testid="stAlert"]{border-radius:14px}
 .stDownloadButton button{border-radius:12px;font-weight:600}
 .nota{font-size:12.5px;color:var(--muted);margin:2px 2px 10px}
-[data-testid="stIFrame"][height="0"],iframe[height="0"]{display:none}
-.element-container:has(iframe[height="0"]){display:none}
+[class*="st-key-js_secoes"]{display:none!important}
 """
 
 
@@ -265,7 +263,8 @@ def aplicar_estilo():
     st.html(f"<style>{CSS}</style>")
     mapa = {pg_.url_path: secao for secao, paginas in SECOES.items() for pg_ in paginas}
     mapa[""] = next(iter(SECOES))  # página inicial
-    components.html(JS_SECOES.replace("__MAPA__", json.dumps(mapa, ensure_ascii=False)), height=0)
+    with st.container(key="js_secoes"):  # elemento invisível que só executa o script do menu
+        st.iframe(JS_SECOES.replace("__MAPA__", json.dumps(mapa, ensure_ascii=False)), height=1)
     st.sidebar.html(
         '<div class="brand"><div class="brand-mark">E</div><div><div class="brand-t">Observatório<br>ENADE</div>'
         '<div class="brand-s">Enade · CPC · IGC</div></div></div>'
@@ -444,7 +443,7 @@ def ajustar(fig, altura=360, legenda=True):
 
 
 def mostrar(fig):
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False, "locale": "pt-BR"})
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False, "locale": "pt-BR"})
 
 
 def resumo(df: pd.DataFrame) -> dict:
@@ -574,7 +573,7 @@ def tabela_cursos(df: pd.DataFrame, nome_arquivo="cursos.csv"):
     }
     t = df[list(cols)].rename(columns=cols).sort_values("CPC contínuo", ascending=False, na_position="last")
     st.dataframe(
-        t, hide_index=True, use_container_width=True,
+        t, hide_index=True, width="stretch",
         column_config={
             "Enade contínuo": st.column_config.ProgressColumn(format="%.3f", min_value=0, max_value=5),
             "CPC contínuo": st.column_config.ProgressColumn(format="%.3f", min_value=0, max_value=5),
@@ -914,7 +913,7 @@ def pagina_cursos_ies():
         k = c1.selectbox("Curso", cursos, format_func=rot.get, key="cies_curso")
         anos_k = sorted(dados.loc[dados["curso_chave"] == k, "ano"].unique())[::-1]
         a = c2.selectbox("Edição", anos_k, key="cies_curso_ano")
-        if c3.button("Ver detalhes →", type="primary", use_container_width=True):
+        if c3.button("Ver detalhes →", type="primary", width="stretch"):
             linha = dados[(dados["curso_chave"] == k) & (dados["ano"] == a)]
             st.session_state.update(ies_area=linha["area"].iloc[0], ies_ies=iid, ies_ano=a, ies_oferta=linha.index[0])
             st.switch_page(PAGINA_IES)
@@ -924,7 +923,7 @@ def pagina_cursos_ies():
         t = t[["Curso", "ano", "modalidade", "participantes", "enade_continuo", "enade_faixa", "idd", "cpc_continuo", "cpc_faixa"]].rename(columns={
             "ano": "Ano", "modalidade": "Modalidade", "participantes": "Participantes", "enade_continuo": "Enade contínuo",
             "enade_faixa": "Enade faixa", "idd": "IDD", "cpc_continuo": "CPC contínuo", "cpc_faixa": "CPC faixa"})
-        st.dataframe(t, hide_index=True, use_container_width=True,
+        st.dataframe(t, hide_index=True, width="stretch",
                      column_config={"Enade contínuo": st.column_config.ProgressColumn(format="%.3f", min_value=0, max_value=5),
                                     "CPC contínuo": st.column_config.ProgressColumn(format="%.3f", min_value=0, max_value=5),
                                     "IDD": st.column_config.NumberColumn(format="%.3f")})
@@ -1076,7 +1075,7 @@ def pagina_comparar():
             t = d.assign(Curso=d["curso_chave"].map(rot))[["Curso", "ano", "participantes", "enade_continuo", "enade_faixa", "idd", "cpc_continuo", "cpc_faixa"]]
             st.dataframe(t.sort_values(["Curso", "ano"]).rename(columns={"ano": "Ano", "participantes": "Participantes", "enade_continuo": "Enade contínuo",
                                                                         "enade_faixa": "Enade faixa", "idd": "IDD", "cpc_continuo": "CPC contínuo", "cpc_faixa": "CPC faixa"}),
-                         hide_index=True, use_container_width=True)
+                         hide_index=True, width="stretch")
 
 
 def pagina_igc():
@@ -1156,7 +1155,7 @@ def pagina_igc():
         destaque = t["ies_id"] == iid
         estilo = t.drop(columns="ies_id").style.apply(
             lambda linha: ["background-color:#eaf2fc;font-weight:700" if destaque.loc[linha.name] else "" for _ in linha], axis=1)
-        st.dataframe(estilo, hide_index=True, use_container_width=True, height=420,
+        st.dataframe(estilo, hide_index=True, width="stretch", height=420,
                      column_config={"IGC contínuo": st.column_config.ProgressColumn(format="%.3f", min_value=0, max_value=5)})
 
     with st.expander("Componentes do IGC por edição", icon="📋"):
@@ -1164,7 +1163,7 @@ def pagina_igc():
                      .rename(columns={"ano": "Ano", "igc_faixa": "Faixa", "igc_continuo": "Contínuo", "conceito_graduacao": "Graduação",
                                       "alfa": "α (grad.)", "conceito_mestrado": "Mestrado", "beta": "β (mestr.)",
                                       "conceito_doutorado": "Doutorado", "gama": "γ (dout.)", "n_cursos_cpc": "Cursos c/ CPC"}),
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width="stretch")
 
 
 def pagina_sobre():
@@ -1203,10 +1202,10 @@ def pagina_sobre():
         cob = CPC.groupby("ano").agg(cursos=("area", "size"), areas=("area", "nunique"), ies=("ies_id", "nunique"),
                                      com_cpc=("cpc_continuo", lambda s: s.notna().sum())).reset_index()
         st.dataframe(cob.rename(columns={"ano": "Ano", "cursos": "Cursos", "areas": "Áreas", "ies": "IES", "com_cpc": "Com CPC"}),
-                     hide_index=True, use_container_width=True)
+                     hide_index=True, width="stretch")
     with st.expander("Áreas avaliadas em cada edição", icon="🗓️"):
         m = pd.crosstab(CPC["area"].map(titulo), CPC["ano"])
-        st.dataframe(m.map(lambda v: "●" if v else ""), use_container_width=True, height=520)
+        st.dataframe(m.map(lambda v: "●" if v else ""), width="stretch", height=520)
 
 
 # ================================================================ ENADE Licenciaturas / ENADE Medicina
@@ -1364,7 +1363,7 @@ def tabela_novo(df: pd.DataFrame, nome_arquivo: str):
     }
     t = df[list(cols)].rename(columns=cols).sort_values("% acima do padrão", ascending=False, na_position="last")
     t["Área"] = t["Área"].map(titulo)
-    st.dataframe(t, hide_index=True, use_container_width=True,
+    st.dataframe(t, hide_index=True, width="stretch",
                  column_config={"% acima do padrão": st.column_config.ProgressColumn(format="percent", min_value=0, max_value=1),
                                 "Inscritos": st.column_config.NumberColumn(format="%d"),
                                 "Participantes": st.column_config.NumberColumn(format="%d"),
