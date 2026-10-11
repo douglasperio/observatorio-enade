@@ -353,7 +353,8 @@ def dif(v, ref, contra="Brasil", casas=2, pp=False, menor_melhor=False):
     if v is None or ref is None or pd.isna(v) or pd.isna(ref):
         return None
     d = (v - ref) * (100 if pp else 1)
-    s = 1 if d > 0.005 else (-1 if d < -0.005 else 0)
+    d_exibido = round(d, 0 if pp else casas)  # diferença que arredonda para zero aparece como neutra
+    s = 1 if d_exibido > 0 else (-1 if d_exibido < 0 else 0)
     seta = "▲" if s > 0 else ("▼" if s < 0 else "●")
     return f"{seta} {br(abs(d), 0 if pp else casas)}{' p.p.' if pp else ''} vs {contra}", (-s if menor_melhor else s)
 
@@ -758,12 +759,18 @@ def pagina_ies():
         fig.update_yaxes(range=[0, 5.2])
         mostrar(ajustar(fig, altura=400))
     if pd.notna(r["fg_bruta"]):
-        fg_br, ce_br = br_ano["fg_bruta"].mean(), br_ano["ce_bruta"].mean()
-        fg_uf, ce_uf = uf_ano["fg_bruta"].mean(), uf_ano["ce_bruta"].mean()
+        # Médias do estado e do Brasil como o INEP publica: média de todos os estudantes, ou seja,
+        # nota de cada curso ponderada pelo nº de concluintes participantes (confere com os relatórios de curso).
+        def media_estudantes(d, serie):
+            ok = serie.notna() & d["participantes"].gt(0)
+            return (serie[ok] * d.loc[ok, "participantes"]).sum() / d.loc[ok, "participantes"].sum() if ok.any() else float("nan")
+
         # Nota geral = 25% Formação Geral + 75% Componente Específico (regra do INEP); oficial quando a planilha traz.
         geral = lambda d: d["geral_bruta"].fillna(0.25 * d["fg_bruta"] + 0.75 * d["ce_bruta"])
         g_curso = r["geral_bruta"] if pd.notna(r["geral_bruta"]) else 0.25 * r["fg_bruta"] + 0.75 * r["ce_bruta"]
-        g_br, g_uf = geral(br_ano).mean(), geral(uf_ano).mean()
+        fg_br, fg_uf = media_estudantes(br_ano, br_ano["fg_bruta"]), media_estudantes(uf_ano, uf_ano["fg_bruta"])
+        ce_br, ce_uf = media_estudantes(br_ano, br_ano["ce_bruta"]), media_estudantes(uf_ano, uf_ano["ce_bruta"])
+        g_br, g_uf = media_estudantes(br_ano, geral(br_ano)), media_estudantes(uf_ano, geral(uf_ano))
         kpis(
             kpi("Formação Geral · nota bruta", br(r["fg_bruta"], 1), delta=dif(r["fg_bruta"], fg_br, casas=1),
                 sub=f"Média {r['uf']}: {br(fg_uf, 1)} · Brasil: {br(fg_br, 1)}"),
@@ -1168,7 +1175,8 @@ def pagina_sobre():
 - A planilha de 2017 tinha cada linha repetida; as duplicatas foram removidas.
 - **SC** = sem conceito (ex.: menos de 2 concluintes participantes).
 - O histórico de um curso liga as edições por IES + área + município + modalidade.
-- Médias são simples (cada curso pesa igual), sobre os cursos com valor calculado.
+- Médias de indicadores (Conceito Enade, CPC, IDD etc.) são simples: cada curso pesa igual, sobre os cursos com valor calculado.
+- Médias das **notas brutas** (Formação Geral, Componente Específico e Resultado Geral) do estado e do Brasil seguem o INEP: média de todos os estudantes, isto é, a nota de cada curso ponderada pelo nº de concluintes participantes. Conferido com os Relatórios de Curso oficiais de Odontologia de 2010 e 2013.
 """)
     with c2, card("sobre_upd"):
         secao("Manutenção", "Como incluir uma nova edição")
