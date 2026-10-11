@@ -760,11 +760,17 @@ def pagina_ies():
     if pd.notna(r["fg_bruta"]):
         fg_br, ce_br = br_ano["fg_bruta"].mean(), br_ano["ce_bruta"].mean()
         fg_uf, ce_uf = uf_ano["fg_bruta"].mean(), uf_ano["ce_bruta"].mean()
+        # Nota geral = 25% Formação Geral + 75% Componente Específico (regra do INEP); oficial quando a planilha traz.
+        geral = lambda d: d["geral_bruta"].fillna(0.25 * d["fg_bruta"] + 0.75 * d["ce_bruta"])
+        g_curso = r["geral_bruta"] if pd.notna(r["geral_bruta"]) else 0.25 * r["fg_bruta"] + 0.75 * r["ce_bruta"]
+        g_br, g_uf = geral(br_ano).mean(), geral(uf_ano).mean()
         kpis(
             kpi("Formação Geral · nota bruta", br(r["fg_bruta"], 1), delta=dif(r["fg_bruta"], fg_br, casas=1),
                 sub=f"Média {r['uf']}: {br(fg_uf, 1)} · Brasil: {br(fg_br, 1)}"),
             kpi("Componente Específico · nota bruta", br(r["ce_bruta"], 1), delta=dif(r["ce_bruta"], ce_br, casas=1),
                 sub=f"Média {r['uf']}: {br(ce_uf, 1)} · Brasil: {br(ce_br, 1)}"),
+            kpi("Resultado Geral · nota bruta", br(g_curso, 1), delta=dif(g_curso, g_br, casas=1), destaque=True,
+                sub=f"Média {r['uf']}: {br(g_uf, 1)} · Brasil: {br(g_br, 1)}<br>25% Formação Geral + 75% Componente Específico"),
         )
 
     bloco("Histórico do curso", "todas as edições em que foi avaliado")
