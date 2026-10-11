@@ -33,6 +33,14 @@ As seções do menu começam recolhidas (fica aberta só a da página atual); cl
    - `Enade Medicina` (ex.: `Enade Medicina 2026.xlsx`)
 2. Dê dois cliques em **Atualizar Dados.bat**.
 
+### Notas de Formação Geral e Componente Específico (microdados)
+As médias de FG, CE e Resultado Geral do estado e do Brasil vêm dos microdados do Enade (de 2014 em diante),
+já resumidos em `dados/notas_microdados.parquet`. Quando o INEP publicar uma nova edição:
+1. Baixe os microdados em https://www.gov.br/inep/pt-br/acesso-a-informacao/dados-abertos/microdados/enade
+   (arquivo `microdados_enade_AAAA.zip`) para uma pasta qualquer (se vier em .rar, extraia numa subpasta `extraido_AAAA`).
+2. Rode: `python etl/microdados_enade.py <pasta onde está o arquivo>` (os anos já resumidos são mantidos).
+3. Dê dois cliques em **Atualizar Dados.bat**. O arquivo baixado pode ser apagado depois.
+
 O arquivo e a aba certa são encontrados automaticamente; não é preciso editar código.
 Se houver dois arquivos do mesmo ano na mesma pasta, o mais recente é usado (e um aviso aparece).
 

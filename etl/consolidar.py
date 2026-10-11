@@ -443,11 +443,100 @@ def completar_ies(cpc: pd.DataFrame, igc: pd.DataFrame) -> pd.DataFrame:
     return cpc
 
 
+# ---------------------------------------------------------------- notas brutas (FG, CE, Resultado Geral)
+# Duas fontes, cada uma usada onde reproduz os Relatórios de Curso do INEP:
+#   2014 em diante: microdados do Enade (etl/microdados_enade.py -> dados/notas_microdados.parquet);
+#   2010–2013: planilhas de CPC, ponderando a nota de cada curso pelo nº de participantes
+#              (a versão LGPD dos microdados desses anos não reproduz os relatórios; 2010 mistura ingressantes).
+ANO_MIN_MICRODADOS = 2014
+UF_IBGE = {11: "RO", 12: "AC", 13: "AM", 14: "RR", 15: "PA", 16: "AP", 17: "TO", 21: "MA", 22: "PI", 23: "CE",
+           24: "RN", 25: "PB", 26: "PE", 27: "AL", 28: "SE", 29: "BA", 31: "MG", 32: "ES", 33: "RJ", 35: "SP",
+           41: "PR", 42: "SC", 43: "RS", 50: "MS", 51: "MT", 52: "GO", 53: "DF"}
+
+
+def integrar_notas(cpc: pd.DataFrame):
+    """Acrescenta ao CPC as notas por curso vindas dos microdados e devolve a tabela de somas por área/ano/UF."""
+    for c in ("fg_micro", "ce_micro", "ger_micro", "n_micro"):
+        cpc[c] = np.nan
+    arq = SAIDA / "notas_microdados.parquet"
+    micro = pd.read_parquet(arq) if arq.exists() else pd.DataFrame()
+    if not micro.empty:
+        micro = micro[(micro["ano"] >= ANO_MIN_MICRODADOS) & micro["n"].gt(0)].copy()
+        micro["uf"] = micro["co_uf_curso"].map(UF_IBGE)
+
+        # Código de área (CO_GRUPO) de cada área do CPC: direto da planilha, quando ela traz.
+        mapa = cpc.loc[cpc["cod_area"] != "", ["ano", "area", "cod_area"]].rename(columns={"cod_area": "co_grupo"})
+        # Ligação por código do curso (planilhas de 2016 em diante).
+        por_cod = cpc[(cpc["cod_curso"] != "") & (cpc["ano"] >= ANO_MIN_MICRODADOS)][["ano", "cod_curso", "area"]].merge(
+            micro[["ano", "co_curso", "co_grupo"]], left_on=["ano", "cod_curso"], right_on=["ano", "co_curso"])
+        mapa = pd.concat([mapa, por_cod[["ano", "area", "co_grupo"]]]).drop_duplicates()
+        # Área -> código mais frequente em todos os anos (usado nos anos em que a planilha não permite ligar: 2014–2015).
+        global_area = mapa.groupby("area")["co_grupo"].agg(lambda s: s.value_counts().index[0])
+
+        # Município: nome -> código IBGE, a partir das planilhas que trazem os dois.
+        # (só códigos IBGE de 7 dígitos: 2010–2011 usam outro padrão)
+        mun = cpc.loc[cpc["cod_municipio"].str.len() == 7, ["uf", "municipio", "cod_municipio"]].copy()
+        mun["chave"] = mun["uf"] + "|" + mun["municipio"].fillna("").map(norm)
+        mun = mun.drop_duplicates("chave").set_index("chave")["cod_municipio"]
+
+        # Notas por curso: pelo código do curso; sem código (2014–2015), pela unidade IES + área + município.
+        micro_curso = micro.set_index(["ano", "co_curso"])
+        unid = micro.groupby(["ano", "co_ies", "co_grupo", "co_munic_curso"])[
+            ["n", "soma_fg", "n_fg", "soma_ce", "n_ce", "soma_ger", "n_ger"]].sum()
+        alvo = cpc["ano"] >= ANO_MIN_MICRODADOS
+        for i in cpc.index[alvo]:
+            ano, cod = cpc.at[i, "ano"], cpc.at[i, "cod_curso"]
+            linha = None
+            if cod and (ano, cod) in micro_curso.index:
+                linha = micro_curso.loc[(ano, cod)]
+            else:
+                grupo = global_area.get(cpc.at[i, "area"])
+                cod_mun = cpc.at[i, "cod_municipio"]
+                if len(cod_mun or "") != 7:
+                    cod_mun = mun.get(f"{cpc.at[i, 'uf']}|{norm(cpc.at[i, 'municipio'] or '')}")
+                chave = (ano, cpc.at[i, "cod_ies"], grupo, cod_mun)
+                if grupo and cod_mun and chave in unid.index:
+                    linha = unid.loc[chave]
+            if linha is not None and linha["n"] > 0:
+                cpc.at[i, "n_micro"] = linha["n"]
+                cpc.at[i, "fg_micro"] = linha["soma_fg"] / linha["n_fg"] if linha["n_fg"] else np.nan
+                cpc.at[i, "ce_micro"] = linha["soma_ce"] / linha["n_ce"] if linha["n_ce"] else np.nan
+                cpc.at[i, "ger_micro"] = linha["soma_ger"] / linha["n_ger"] if linha["n_ger"] else np.nan
+        lig = cpc.loc[alvo, "n_micro"].notna().mean()
+        print(f"Notas dos microdados ligadas a {lig:.1%} dos cursos de {ANO_MIN_MICRODADOS} em diante")
+
+        # Somas por área/ano/UF a partir dos microdados (todos os estudantes, inclusive de cursos fora do CPC).
+        por_ano = mapa.groupby(["ano", "co_grupo"])["area"].agg(lambda s: s.value_counts().index[0])
+        inverso = {g: a for a, g in global_area.items()}
+        micro["area"] = [por_ano.get((a, g), inverso.get(g)) for a, g in zip(micro["ano"], micro["co_grupo"])]
+        somas_micro = micro.dropna(subset=["area"]).groupby(["ano", "area", "uf"])[
+            ["n_fg", "soma_fg", "n_ce", "soma_ce", "n_ger", "soma_ger"]].sum().reset_index()
+        somas_micro["fonte"] = "microdados"
+    else:
+        somas_micro = pd.DataFrame()
+
+    # 2010–2013 (e anos sem microdados): somas a partir do CPC, ponderadas pelos participantes.
+    anos_micro = set(somas_micro["ano"]) if len(somas_micro) else set()
+    base = cpc[~cpc["ano"].isin(anos_micro) & cpc["participantes"].gt(0)].copy()
+    ger = base["geral_bruta"].fillna(0.25 * base["fg_bruta"] + 0.75 * base["ce_bruta"])
+    for nome, serie in (("fg", base["fg_bruta"]), ("ce", base["ce_bruta"]), ("ger", ger)):
+        base[f"n_{nome}"] = base["participantes"].where(serie.notna(), 0)
+        base[f"soma_{nome}"] = (serie * base["participantes"]).fillna(0)
+    somas_cpc = base.groupby(["ano", "area", "uf"])[["n_fg", "soma_fg", "n_ce", "soma_ce", "n_ger", "soma_ger"]].sum().reset_index()
+    somas_cpc = somas_cpc[somas_cpc["n_fg"] > 0]
+    somas_cpc["fonte"] = "cpc"
+    somas = pd.concat([somas_micro, somas_cpc], ignore_index=True)
+    print(f"Somas de notas por área/UF: {len(somas)} linhas ({', '.join(f'{f}: {n}' for f, n in somas['fonte'].value_counts().items())})")
+    return cpc, somas
+
+
 def main():
     SAIDA.mkdir(exist_ok=True)
     cpc = consolidar_cpc()
     igc = consolidar_igc()
     cpc = completar_ies(cpc, igc)
+    cpc, somas = integrar_notas(cpc)
+    somas.to_parquet(SAIDA / "notas_area_uf.parquet", index=False)
     novo = consolidar_enade_novo()
 
     igc["ies_id"] = igc["cod_ies"]

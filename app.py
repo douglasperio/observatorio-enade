@@ -300,14 +300,20 @@ def carregar(versao=None):
         + " — " + cpc["municipio"].str.title() + "/" + cpc["uf"]
         + cpc["modalidade"].map(lambda m: " (EaD)" if "dist" in str(m).lower() else "")
     )
-    return cpc, igc
+    for c in ("fg_micro", "ce_micro", "ger_micro"):
+        if c not in cpc:
+            cpc[c] = float("nan")
+    arq_notas = DADOS / "notas_area_uf.parquet"
+    notas = pd.read_parquet(arq_notas) if arq_notas.exists() else pd.DataFrame(
+        columns=["ano", "area", "uf", "n_fg", "soma_fg", "n_ce", "soma_ce", "n_ger", "soma_ger", "fonte"])
+    return cpc, igc, notas
 
 
 if not (DADOS / "cpc.parquet").exists():
     st.error("Base consolidada não encontrada. Rode primeiro:  `python etl/consolidar.py`")
     st.stop()
 
-CPC, IGC = carregar(versao_dados())
+CPC, IGC, NOTAS = carregar(versao_dados())
 
 
 # ---------------------------------------------------------------- utilitários
@@ -758,27 +764,35 @@ def pagina_ies():
         fig.update_traces(marker_cornerradius=4, hovertemplate="%{x}<br>%{fullData.name}: <b>%{y:.3f}</b><extra></extra>")
         fig.update_yaxes(range=[0, 5.2])
         mostrar(ajustar(fig, altura=400))
-    if pd.notna(r["fg_bruta"]):
-        # Médias do estado e do Brasil como o INEP publica: média de todos os estudantes, ou seja,
-        # nota de cada curso ponderada pelo nº de concluintes participantes (confere com os relatórios de curso).
-        def media_estudantes(d, serie):
-            ok = serie.notna() & d["participantes"].gt(0)
-            return (serie[ok] * d.loc[ok, "participantes"]).sum() / d.loc[ok, "participantes"].sum() if ok.any() else float("nan")
-
-        # Nota geral = 25% Formação Geral + 75% Componente Específico (regra do INEP); oficial quando a planilha traz.
-        geral = lambda d: d["geral_bruta"].fillna(0.25 * d["fg_bruta"] + 0.75 * d["ce_bruta"])
-        g_curso = r["geral_bruta"] if pd.notna(r["geral_bruta"]) else 0.25 * r["fg_bruta"] + 0.75 * r["ce_bruta"]
-        fg_br, fg_uf = media_estudantes(br_ano, br_ano["fg_bruta"]), media_estudantes(uf_ano, uf_ano["fg_bruta"])
-        ce_br, ce_uf = media_estudantes(br_ano, br_ano["ce_bruta"]), media_estudantes(uf_ano, uf_ano["ce_bruta"])
-        g_br, g_uf = media_estudantes(br_ano, geral(br_ano)), media_estudantes(uf_ano, geral(uf_ano))
+    # Notas brutas do curso: oficiais da planilha de CPC quando existem; senão, dos microdados do INEP.
+    fg_c = r["fg_bruta"] if pd.notna(r["fg_bruta"]) else r.get("fg_micro")
+    ce_c = r["ce_bruta"] if pd.notna(r["ce_bruta"]) else r.get("ce_micro")
+    if pd.notna(r["geral_bruta"]):
+        g_curso = r["geral_bruta"]
+    elif pd.notna(r["fg_bruta"]):  # Resultado Geral = 25% FG + 75% CE (regra do INEP)
+        g_curso = 0.25 * r["fg_bruta"] + 0.75 * r["ce_bruta"]
+    else:
+        g_curso = r.get("ger_micro")
+    if pd.notna(fg_c):
+        # Médias do estado e do Brasil como o INEP publica: média de todos os estudantes (ver etl/consolidar.py).
+        s = NOTAS[(NOTAS["ano"] == ano) & (NOTAS["area"] == area)]
+        s_uf = s[s["uf"] == r["uf"]]
+        media = lambda d, nota: d[f"soma_{nota}"].sum() / d[f"n_{nota}"].sum() if d[f"n_{nota}"].sum() else float("nan")
+        fg_br, fg_uf = media(s, "fg"), media(s_uf, "fg")
+        ce_br, ce_uf = media(s, "ce"), media(s_uf, "ce")
+        g_br, g_uf = media(s, "ger"), media(s_uf, "ger")
         kpis(
-            kpi("Formação Geral · nota bruta", br(r["fg_bruta"], 1), delta=dif(r["fg_bruta"], fg_br, casas=1),
+            kpi("Formação Geral · nota bruta", br(fg_c, 1), delta=dif(fg_c, fg_br, casas=1),
                 sub=f"Média {r['uf']}: {br(fg_uf, 1)} · Brasil: {br(fg_br, 1)}"),
-            kpi("Componente Específico · nota bruta", br(r["ce_bruta"], 1), delta=dif(r["ce_bruta"], ce_br, casas=1),
+            kpi("Componente Específico · nota bruta", br(ce_c, 1), delta=dif(ce_c, ce_br, casas=1),
                 sub=f"Média {r['uf']}: {br(ce_uf, 1)} · Brasil: {br(ce_br, 1)}"),
             kpi("Resultado Geral · nota bruta", br(g_curso, 1), delta=dif(g_curso, g_br, casas=1), destaque=True,
                 sub=f"Média {r['uf']}: {br(g_uf, 1)} · Brasil: {br(g_br, 1)}<br>25% Formação Geral + 75% Componente Específico"),
         )
+        fonte = s["fonte"].iloc[0] if len(s) else ""
+        st.html('<div class="nota">Médias do estado e do Brasil calculadas com a nota de todos os estudantes, como nos relatórios do INEP — '
+                + ("fonte: microdados do Enade." if fonte == "microdados" else "fonte: planilhas de CPC, ponderadas pelo nº de participantes.")
+                + "</div>")
 
     bloco("Histórico do curso", "todas as edições em que foi avaliado")
     hist = CPC[CPC["curso_chave"] == r["curso_chave"]].groupby("ano").agg(
@@ -1176,7 +1190,7 @@ def pagina_sobre():
 - **SC** = sem conceito (ex.: menos de 2 concluintes participantes).
 - O histórico de um curso liga as edições por IES + área + município + modalidade.
 - Médias de indicadores (Conceito Enade, CPC, IDD etc.) são simples: cada curso pesa igual, sobre os cursos com valor calculado.
-- Médias das **notas brutas** (Formação Geral, Componente Específico e Resultado Geral) do estado e do Brasil seguem o INEP: média de todos os estudantes, isto é, a nota de cada curso ponderada pelo nº de concluintes participantes. Conferido com os Relatórios de Curso oficiais de Odontologia de 2010 e 2013.
+- **Notas brutas** (Formação Geral, Componente Específico e Resultado Geral): as médias do estado e do Brasil seguem o INEP (média de todos os estudantes). De 2014 em diante vêm dos **microdados do Enade**; de 2010 a 2013, das planilhas de CPC ponderadas pelo nº de participantes (a versão atual dos microdados desses anos não reproduz os relatórios). Conferido com 24 valores de Relatórios de Curso oficiais (2010–2019): 13 idênticos e os demais a até 0,2 ponto (um caso de 2013 a 0,4). Os microdados também fornecem as notas dos cursos em 2014–2021, ausentes nas planilhas de CPC.
 """)
     with c2, card("sobre_upd"):
         secao("Manutenção", "Como incluir uma nova edição")
