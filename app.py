@@ -1859,12 +1859,175 @@ def pagina_cidade(prog=None):
     return pagina
 
 
+# ---------------------------------------------------------------- Evolução do curso (todas as seções)
+NOTAS_BRUTAS = {"Resultado Geral": "ger", "Formação Geral": "fg", "Componente Específico": "ce"}
+
+
+def notas_do_curso(linhas: pd.DataFrame) -> pd.DataFrame:
+    """Notas brutas do curso por edição: oficiais do CPC quando existem; senão, dos microdados."""
+    fg = linhas["fg_bruta"].fillna(linhas["fg_micro"])
+    ce = linhas["ce_bruta"].fillna(linhas["ce_micro"])
+    ger = linhas["geral_bruta"].fillna(0.25 * linhas["fg_bruta"] + 0.75 * linhas["ce_bruta"]).fillna(linhas["ger_micro"])
+    d = pd.DataFrame({"ano": linhas["ano"], "fg": fg, "ce": ce, "ger": ger, "faixa": linhas["enade_faixa"],
+                      "participantes": linhas["participantes"]})
+    return d.groupby("ano").agg(fg=("fg", "mean"), ce=("ce", "mean"), ger=("ger", "mean"),
+                                faixa=("faixa", "first"), participantes=("participantes", "sum")).reset_index()
+
+
+def medias_area(area: str, uf: str | None = None) -> pd.DataFrame:
+    """Média de todos os estudantes da área por edição (Brasil ou UF), a partir de NOTAS."""
+    s = NOTAS[NOTAS["area"] == area]
+    if uf:
+        s = s[s["uf"] == uf]
+    g = s.groupby("ano")[["soma_fg", "n_fg", "soma_ce", "n_ce", "soma_ger", "n_ger"]].sum()
+    return pd.DataFrame({k: g[f"soma_{k}"] / g[f"n_{k}"].where(g[f"n_{k}"] > 0) for k in ("fg", "ce", "ger")}).reset_index()
+
+
+def pagina_evolucao(prog=None):
+    rotulo_secao = "ENADE" if prog is None else PROGRAMAS[prog]
+    chave = prog or "enade"
+
+    def pagina():
+        # Base de seleção: cursos do Enade regular (seção ENADE) ou do formato novo (Licenciaturas/Medicina).
+        base = CPC if prog is None else base_novo(prog)
+        topo = st.empty()
+        with filtros(f"evo_{chave}"):
+            areas = sorted(base["area"].dropna().unique())
+            if len(areas) > 1:
+                c_area, c_ies = st.columns([2, 3])
+                padrao = "ODONTOLOGIA" if prog is None else "PEDAGOGIA (LICENCIATURA)"
+                area = c_area.selectbox("Curso (área de avaliação)", areas, index=idx(areas, padrao), format_func=titulo,
+                                        key=f"evo_{chave}_area")
+            else:
+                area, c_ies = areas[0], st.container()
+            d_area = base[base["area"] == area]
+            ies = d_area.drop_duplicates("ies_id").sort_values("ies_label")
+            ids = ies["ies_id"].tolist()
+            nomes = dict(zip(ies["ies_id"], ies["ies_label"]))
+            iid = c_ies.selectbox("Instituição (IES)", ids, index=idx(ids, UNILAVRAS), format_func=nomes.get, key=f"evo_{chave}_ies")
+
+            # Ofertas do curso nessa IES (município + modalidade), com as edições em que aparece
+            ofertas = d_area[d_area["ies_id"] == iid]
+            todas_ed = pd.concat([CPC[["curso_chave", "ano"]], NOVO[["curso_chave", "ano"]] if not NOVO.empty else None])
+            anos_por = todas_ed.groupby("curso_chave")["ano"].apply(lambda s: sorted(set(s)))
+            ult = ofertas.sort_values("ano").drop_duplicates("curso_chave", keep="last")
+            rot = {r.curso_chave: f"{r.municipio.title()}/{r.uf} · {r.modalidade} · edições: "
+                                  + ", ".join(map(str, anos_por.get(r.curso_chave, [r.ano]))) for r in ult.itertuples()}
+            c_of, c_nota, c_uf = st.columns([3, 1.6, 1.4], vertical_alignment="bottom")
+            k = c_of.selectbox("Curso nessa instituição", list(rot), format_func=rot.get, key=f"evo_{chave}_oferta")
+            nota_nome = c_nota.selectbox("Nota", list(NOTAS_BRUTAS), key=f"evo_{chave}_nota")
+            ver_uf = c_uf.toggle("Média do estado", key=f"evo_{chave}_uf")
+
+        nota = NOTAS_BRUTAS[nota_nome]
+        linha_ref = ult.set_index("curso_chave").loc[k]
+        uf = linha_ref["uf"]
+        hist = notas_do_curso(CPC[CPC["curso_chave"] == k])
+        br_med = medias_area(area)
+        uf_med = medias_area(area, uf)
+        serie = hist[["ano", nota, "faixa", "participantes"]].merge(br_med[["ano", nota]], on="ano", how="left", suffixes=("", "_br"))
+        serie = serie.merge(uf_med[["ano", nota]].rename(columns={nota: f"{nota}_uf"}), on="ano", how="left")
+        serie = serie.dropna(subset=[nota]).sort_values("ano")
+        serie["dif"] = serie[nota] - serie[f"{nota}_br"]
+        novo_k = NOVO[NOVO["curso_chave"] == k] if not NOVO.empty else NOVO
+
+        nome_ies = titulo(nomes[iid].split(" (")[0])
+        hero(topo, f"{rotulo_secao} · Evolução do curso", f"{titulo(area)} <em>{escape(nome_ies)}</em>",
+             f"{linha_ref['municipio'].title()}/{uf} — {nota_nome} do curso em cada edição do Enade, comparado com a média nacional daquele ano.",
+             [linha_ref["modalidade"], f"{len(serie)} edição(ões) com nota", f"Edições: {', '.join(map(str, anos_por.get(k, [])))}"])
+
+        if serie.empty:
+            st.info("Não há notas brutas (Formação Geral / Componente Específico) para este curso nas edições disponíveis.")
+        else:
+            acima = int((serie["dif"] > 0).sum())
+            melhor = serie.loc[serie[nota].idxmax()]
+            u = serie.iloc[-1]
+            tend = serie[nota].iloc[-1] - serie[nota].iloc[0] if len(serie) > 1 else float("nan")
+            kpis(
+                kpi(f"{nota_nome} · {int(u['ano'])}", br(u[nota], 1), delta=dif(u[nota], u[f"{nota}_br"], casas=1), destaque=True,
+                    sub=f"Média nacional: {br(u[f'{nota}_br'], 1)}"),
+                kpi("Acima da média nacional", f"{acima}<span class='k-of'>de {len(serie)}<br>edições</span>"),
+                kpi("Melhor edição", br(melhor[nota], 1), sub=f"em {int(melhor['ano'])} · média nacional {br(melhor[f'{nota}_br'], 1)}"),
+                kpi("Variação no período", ("+" if tend > 0 else "") + br(tend, 1) if pd.notna(tend) else "—",
+                    sub=f"de {int(serie['ano'].iloc[0])} a {int(u['ano'])}" if len(serie) > 1 else "uma só edição"),
+            )
+
+            with card(f"evo_{chave}_graf"):
+                secao("Evolução", f"{nota_nome} do curso × média nacional", "Nota bruta de 0 a 100 · média de todos os estudantes da área no Brasil")
+                x = serie["ano"].astype(str)
+                # rótulo de cada linha do lado de fora: a mais alta em cima, a mais baixa embaixo
+                pos_curso = ["top center" if d >= 0 else "bottom center" for d in serie["dif"].fillna(0)]
+                pos_br = ["bottom center" if d >= 0 else "top center" for d in serie["dif"].fillna(0)]
+                fig = go.Figure()
+                fig.add_scatter(x=x, y=serie[f"{nota}_br"], name="Média nacional", mode="lines+markers+text",
+                                line=dict(color=COR_BR, width=2, dash="dot"), marker=dict(size=9, color=COR_BR, line=dict(width=2, color="#fff")),
+                                text=[br(v, 1) for v in serie[f"{nota}_br"]], textposition=pos_br, textfont=dict(color=TINTA_2, size=11),
+                                hovertemplate="%{x}: <b>%{y:.1f}</b><extra>Média nacional</extra>")
+                if ver_uf:
+                    fig.add_scatter(x=x, y=serie[f"{nota}_uf"], name=f"Média {uf}", mode="lines+markers",
+                                    line=dict(color=COR_UF, width=2, dash="dash"), marker=dict(size=8, color=COR_UF, line=dict(width=2, color="#fff")),
+                                    hovertemplate="%{x}: <b>%{y:.1f}</b><extra>Média " + uf + "</extra>")
+                fig.add_scatter(x=x, y=serie[nota], name="Este curso", mode="lines+markers+text",
+                                line=dict(color=COR_CURSO, width=3), marker=dict(size=12, color=COR_CURSO, line=dict(width=2, color="#fff")),
+                                text=[br(v, 1) for v in serie[nota]], textposition=pos_curso, textfont=dict(color=TINTA, size=13, family="Fraunces, serif"),
+                                customdata=serie[["dif", "participantes"]].values,
+                                hovertemplate="%{x}: <b>%{y:.1f}</b><br>%{customdata[0]:+.1f} vs média nacional"
+                                              "<br>%{customdata[1]:.0f} participantes<extra>Este curso</extra>")
+                lo = min(serie[nota].min(), serie[f"{nota}_br"].min(), serie[f"{nota}_uf"].min() if ver_uf else 100)
+                hi = max(serie[nota].max(), serie[f"{nota}_br"].max(), serie[f"{nota}_uf"].max() if ver_uf else 0)
+                fig.update_xaxes(type="category")
+                fig.update_yaxes(range=[max(0, lo - 8), min(100, hi + 8)], title=None)
+                mostrar(ajustar(fig, altura=420))
+
+            c1, c2 = st.columns([3, 2], gap="medium")
+            with c1, card(f"evo_{chave}_dif"):
+                secao("Distância da média", "Curso menos média nacional, por edição", "Pontos da nota bruta")
+                t = serie.assign(curso=serie["ano"].astype(str))
+                st.html(divergente_html(t.sort_values("ano", ascending=False), fmt=lambda v: br(v, 1)))
+            with c2, card(f"evo_{chave}_tab"):
+                secao("Tabela", "Notas por edição")
+                tab = serie.rename(columns={"ano": "Edição", nota: "Curso", f"{nota}_br": "Brasil", f"{nota}_uf": f"Média {uf}",
+                                            "dif": "Diferença", "faixa": "Conceito"})
+                cols = ["Edição", "Curso", "Brasil"] + ([f"Média {uf}"] if ver_uf else []) + ["Diferença", "Conceito"]
+                tab = tab[cols].copy()
+                for c in cols[1:-1]:
+                    tab[c] = tab[c].map(lambda v: "—" if pd.isna(v) else br(0.0 if abs(v) < 0.05 else v, 1))
+                tab["Diferença"] = [("+" + d) if d not in ("—", "0,0") and not d.startswith("-") else d for d in tab["Diferença"]]
+                tab["Edição"] = tab["Edição"].astype(str)
+                st.dataframe(tab, hide_index=True, width="stretch")
+
+        # Formato novo (2025+): sem nota bruta publicada; mostra o indicador disponível
+        if len(novo_k):
+            bloco("Enade no formato novo", "Licenciaturas e Medicina a partir de 2025")
+            with card(f"evo_{chave}_novo"):
+                prog_k = novo_k["programa"].iloc[0]
+                linhas_nv = []
+                for r in novo_k.sort_values("ano").itertuples():
+                    ref = NOVO[(NOVO["programa"] == prog_k) & (NOVO["area"] == r.area) & (NOVO["ano"] == r.ano)]
+                    linhas_nv.append((r.ano, r.pct_acima, ref["pct_acima"].mean(), r.enade_faixa))
+                secao("Concluintes acima do padrão", "Curso × média nacional",
+                      "As planilhas do formato novo não publicam nota geral; o indicador do INEP é o % de concluintes com desempenho igual ou acima do padrão.")
+                kpis(*[kpi(f"{a} · % acima do padrão", pct(v, 1), delta=dif(v, m, pp=True), sub=f"Média nacional: {pct(m, 1)} · Conceito {f}")
+                       for a, v, m, f in linhas_nv])
+
+        bloco("Conceito Enade em todas as edições", "faixa de 1 a 5")
+        anos, faixa, dica = historico_cursos([k], NOVO if not NOVO.empty else pd.DataFrame(columns=["curso_chave"]))
+        st.html('<div class="timeline">' + "".join(
+            f'<div class="tl"><div class="tl-ano">{a}</div>{selo(faixa[(k, a)])}<div class="tl-v">{escape(dica[(k, a)])}</div></div>'
+            for a in anos) + "</div>")
+        st.html('<div class="nota">Notas brutas: oficiais das planilhas de CPC quando publicadas; nas demais edições, calculadas a partir dos '
+                'microdados do Enade. Médias nacionais = média de todos os estudantes da área, como nos relatórios do INEP. '
+                'Em 2025 (Licenciaturas e Medicina) o INEP ainda não publicou microdados, por isso não há nota geral nesse ano.</div>')
+    pagina.__name__ = f"evolucao_{chave}"
+    return pagina
+
+
 def paginas_programa(prog, slug, icone_nac):
     if base_novo(prog).empty:
         return []
     return [
         st.Page(pagina_nacional_novo(prog), title="Panorama nacional", icon=icone_nac, url_path=f"{slug}-nacional"),
         st.Page(pagina_ies_novo(prog), title="Curso na IES", icon=":material/school:", url_path=f"{slug}-ies"),
+        st.Page(pagina_evolucao(prog), title="Evolução do curso", icon=":material/timeline:", url_path=f"{slug}-evolucao"),
         st.Page(pagina_cursos_ies_novo(prog), title="Cursos da IES", icon=":material/view_list:", url_path=f"{slug}-cursos-ies"),
         st.Page(pagina_estado_novo(prog), title="Curso no estado", icon=":material/map:", url_path=f"{slug}-estado"),
         st.Page(pagina_cidade(prog), title="Curso por cidade", icon=":material/location_city:", url_path=f"{slug}-cidade"),
@@ -1877,6 +2040,7 @@ SECOES = {
     "ENADE": [
         st.Page(pagina_nacional, title="Panorama nacional", icon=":material/public:", url_path="nacional", default=True),
         PAGINA_IES,
+        st.Page(pagina_evolucao(None), title="Evolução do curso", icon=":material/timeline:", url_path="evolucao"),
         st.Page(pagina_cursos_ies, title="Cursos da IES", icon=":material/view_list:", url_path="cursos-ies"),
         st.Page(pagina_estado, title="Curso no estado", icon=":material/map:", url_path="estado"),
         st.Page(pagina_cidade(None), title="Curso por cidade", icon=":material/location_city:", url_path="cidade"),

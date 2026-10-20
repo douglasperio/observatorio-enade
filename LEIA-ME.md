@@ -8,14 +8,16 @@ Dê dois cliques em **Iniciar Dashboard.bat**. O navegador abre em http://localh
 **ENADE** — Enade regular com CPC (2010–2023)
 - **Panorama nacional** – um curso no Brasil em um ano (ex.: Odontologia 2023).
 - **Curso na IES** – um curso em uma instituição em um ano, com histórico (ex.: Odontologia, Unilavras, 2013).
+- **Evolução do curso** – escolha um curso de uma IES e veja, em todas as edições do Enade, a nota geral (ou Formação Geral / Componente Específico) do curso comparada à média nacional daquele ano (opcionalmente, também à média do estado).
 - **Cursos da IES** – todos os cursos de uma instituição: situação atual, mapa de conceitos por edição, comparação com a média nacional e atalho para o detalhe de cada curso.
 - **Curso no estado** – um curso em uma UF em um ano, com ranking (ex.: Odontologia, MG, 2013).
 - **Curso por cidade** – escolha curso, edição, indicador (CPC, Conceito Enade ou IDD), estado, cidade e a IES em destaque: mostra todos os cursos da área na cidade (concorrência local), faixas cidade × estado × Brasil, as cidades do estado e a trajetória de cada curso.
 - **Comparar cursos** – compara até 8 cursos específicos (ex.: o mesmo curso em IES diferentes).
 
 **ENADE Licenciaturas** e **ENADE Medicina** — formato novo (a partir de 2025)
-- As mesmas análises: Panorama nacional, Curso na IES, Cursos da IES, Curso no estado, Curso por cidade e Comparar cursos
-  (em Curso por cidade, os indicadores são % acima do padrão e taxa de participação).
+- As mesmas análises: Panorama nacional, Curso na IES, Evolução do curso, Cursos da IES, Curso no estado, Curso por cidade e Comparar cursos
+  (em Curso por cidade, os indicadores são % acima do padrão e taxa de participação; em Evolução do curso, as edições do Enade regular
+  mostram a nota geral e 2025 aparece num painel à parte, pois o INEP ainda não publicou a nota geral desse ano).
 - Não há CPC. O indicador contínuo é o **% de concluintes com desempenho igual ou acima do padrão**, que define a faixa do Conceito Enade.
 - O histórico de cada curso inclui as faixas que ele teve no Enade regular.
 
