@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Observatório ENADE</title>
+  <meta name="description" content="Dashboard de resultados do Enade, CPC e IGC" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@stlite/browser@1.11.0/build/stlite.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Instrument+Sans:wght@400;600&display=swap" rel="stylesheet" />
+  <style>
+    html, body { margin: 0; background: #f4f2ec; }
+    /* Tela de carregamento: some quando o Streamlit desenha a primeira página */
+    #carregando {
+      position: fixed; inset: 0; z-index: 9999; display: grid; place-items: center;
+      background: radial-gradient(900px 500px at 85% -10%, rgba(42,120,214,.18), transparent 60%), linear-gradient(140deg, #0b1830, #173a6e 60%, #2a64b0);
+      color: #fff; font-family: "Instrument Sans", system-ui, sans-serif; text-align: center; padding: 24px;
+      transition: opacity .5s ease;
+    }
+    #carregando.sumir { opacity: 0; pointer-events: none; }
+    #carregando .marca { width: 64px; height: 64px; border-radius: 18px; margin: 0 auto 18px; display: grid; place-items: center;
+      background: linear-gradient(135deg, #f0c46b, #e39b2d); color: #0b1830; font: 700 34px "Fraunces", serif; }
+    #carregando h1 { font: 600 clamp(26px, 4vw, 38px) "Fraunces", serif; margin: 0 0 8px; }
+    #carregando p { margin: 4px 0; color: rgba(255,255,255,.8); font-size: 15px; max-width: 520px; }
+    #carregando .barra { width: min(320px, 70vw); height: 6px; border-radius: 99px; background: rgba(255,255,255,.18); overflow: hidden; margin: 22px auto 10px; }
+    #carregando .barra span { display: block; height: 100%; width: 40%; border-radius: 99px; background: #f0c46b; animation: vai 1.4s ease-in-out infinite; }
+    #carregando small { color: rgba(255,255,255,.6); font-size: 12.5px; }
+    @keyframes vai { 0% { transform: translateX(-100%); } 100% { transform: translateX(260%); } }
+  </style>
+</head>
+<body>
+  <div id="carregando">
+    <div>
+      <div class="marca">E</div>
+      <h1>Observatório ENADE</h1>
+      <p>Preparando o painel no seu navegador…</p>
+      <div class="barra"><span></span></div>
+      <small id="etapa">Na primeira visita isso pode levar até 1 minuto. Depois fica bem mais rápido.</small>
+    </div>
+  </div>
+  <div id="root"></div>
+
+  <script type="module">
+    import { mount } from "https://cdn.jsdelivr.net/npm/@stlite/browser@1.11.0/build/stlite.js";
+
+    // Arquivos do app e bases de dados, baixados pelo navegador e montados no sistema de arquivos virtual.
+    const arquivos = ["app.py", "dados/cpc.parquet", "dados/igc.parquet", "dados/enade_novo.parquet", "dados/notas_area_uf.parquet"];
+    const files = Object.fromEntries(arquivos.map((a) => [a, { url: "./" + a }]));
+
+    mount(
+      {
+        entrypoint: "app.py",
+        requirements: ["pandas", "plotly", "pyarrow"],
+        files,
+        streamlitConfig: {
+          "theme.base": "light",
+          "theme.primaryColor": "#2a78d6",
+          "theme.backgroundColor": "#f4f2ec",
+          "theme.secondaryBackgroundColor": "#ebe8e0",
+          "theme.textColor": "#0f1f3d",
+          "client.toolbarMode": "viewer",
+          "client.showErrorDetails": true,
+        },
+      },
+      document.getElementById("root"),
+    );
+
+    // Esconde a tela de carregamento quando a primeira página do app aparecer.
+    const aviso = document.getElementById("carregando");
+    const observador = new MutationObserver(() => {
+      if (document.querySelector(".hero, [data-testid='stSidebarNav'], [data-testid='stException']")) {
+        aviso.classList.add("sumir");
+        setTimeout(() => aviso.remove(), 600);
+        observador.disconnect();
+      }
+    });
+    observador.observe(document.body, { childList: true, subtree: true });
+  </script>
+</body>
+</html>

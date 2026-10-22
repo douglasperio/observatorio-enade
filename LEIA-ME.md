@@ -3,6 +3,12 @@
 ## Como abrir
 Dê dois cliques em **Iniciar Dashboard.bat**. O navegador abre em http://localhost:8501.
 
+## Versão online (Vercel)
+O mesmo app também roda **direto no navegador** (tecnologia stlite), hospedado como site estático na Vercel:
+`index.html` carrega o `app.py` e as bases de `dados/`. Não há servidor para "dormir"; em compensação, cada abertura
+leva cerca de 30 s enquanto o navegador prepara o Python. A configuração da Vercel está em `vercel.json`.
+Para atualizar o site, basta enviar as mudanças ao GitHub (a Vercel republica sozinha).
+
 ## Seções e páginas (menu lateral)
 
 **ENADE** — Enade regular com CPC (2010–2023)
